@@ -15,11 +15,10 @@ BASE_URL = "https://www.thesportsdb.com/api/v1/json/3/"
 SEARCH_EVENTS_URL = BASE_URL + "searchevents.php"
 SEARCH_TEAMS_URL = BASE_URL + "searchteams.php"
 N_SEASONS = 10
-REQUEST_DELAY = 0.25  # be polite to the free tier - it 429s on a tight burst ) 
+REQUEST_DELAY = 0.25  # be polite to the free tier - it 429s on a tight burst hahah
 
-# Curated list for the team pickers - avoids hitting TheSportsDB just to list
-# teams, and its free tier has no "all teams" endpoint anyway. after that you have to pay or 
-# hope that the team name you typed is in their database. sorted for convenience.
+# Curated list for the team - avoids hitting the dynamic TheSportsDB just to list
+# teams and its free tier with no payment has no "all teams" endpoint anyway.
 TEAMS = sorted([
     "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton",
     "Chelsea", "Crystal Palace", "Everton", "Fulham", "Liverpool",
@@ -40,7 +39,7 @@ TEAMS = sorted([
 ])
 
 
-#  pure helpers used by test_app.py 
+#  pure helpers (also used by test_app.py) 
 def season_list(n=N_SEASONS, today=None):
     """Last n football seasons, oldest first, ending with the season in progress
     today (season runs roughly Jul-Jun)."""
@@ -67,7 +66,7 @@ def match_row(event, team_a, team_b):
     elif home == team_b:
         a_goals, b_goals = away_score, home_score
     else:
-        return None  # safety - it should not happen  
+        return None  # safety guard = shouldn't happen
 
     winner = "Draw" if a_goals == b_goals else (team_a if a_goals > b_goals else team_b)
     return {
@@ -84,7 +83,7 @@ def match_row(event, team_a, team_b):
     }
 
 
-#  API calls
+# API calls 
 def _get(url, params, retries=3):
     """GET with light pacing + backoff retries on a 429 (the free tier rate-limits bursts)."""
     for attempt in range(retries):
@@ -118,13 +117,11 @@ def resolve_team(name):
     return {"strTeam": t["strTeam"], "strTeamShort": t.get("strTeamShort")}
 
 
-def _search_events(name_a, name_b, seasons, _progress=None):
+def _search_events(name_a, name_b, seasons):
     events = {}
     failures = 0
     attempts = 0
-    for i, season in enumerate(seasons):
-        if _progress is not None:
-            _progress.progress(i / len(seasons), text=f"Checking {season}... ({i}/{len(seasons)} seasons)")
+    for season in seasons:
         for e_name in (f"{name_a} vs {name_b}", f"{name_b} vs {name_a}"):
             attempts += 1
             data = _get(SEARCH_EVENTS_URL, {"e": e_name, "s": season})
@@ -133,8 +130,6 @@ def _search_events(name_a, name_b, seasons, _progress=None):
                 continue
             for ev in (data.get("event") or []):
                 events[ev["idEvent"]] = ev
-    if _progress is not None:
-        _progress.progress(1.0, text="Done.")
     return events, failures, attempts
 
 
@@ -153,17 +148,17 @@ def _pick_name_variant(team_a, team_b, team_a_short, team_b_short, probe_season)
     return team_a, team_b
 
 
-@st.cache_data(show_spinner="Fetching matches from TheSportsDB...")
-def fetch_matches(team_a, team_b, team_a_short, team_b_short, seasons, _progress=None):
+@st.cache_data(show_spinner="Fetching matches from TheSportsDB... (first look-up per team pair takes ~15-25s)")
+def fetch_matches(team_a, team_b, team_a_short, team_b_short, seasons):
     if not seasons:
         return [], False
     name_a, name_b = _pick_name_variant(team_a, team_b, team_a_short, team_b_short, seasons[-1])
-    events, failures, attempts = _search_events(name_a, name_b, seasons, _progress)
+    events, failures, attempts = _search_events(name_a, name_b, seasons)
     api_down = attempts > 0 and failures == attempts
     return list(events.values()), api_down
 
 
-# --- UI -----------------------------------------------------------------
+#  UI 
 def main():
     st.set_page_config(page_title="Football Rivalry Explorer", layout="wide")
     st.title("Football Rivalry Explorer")
@@ -203,14 +198,11 @@ def main():
     team_b = team_b_info["strTeam"]
     selected_seasons = tuple(s for s in seasons if start_season <= s <= end_season)
 
-    progress = st.progress(0, text="Starting...")
     t0 = time.time()
     raw_events, api_down = fetch_matches(
-        team_a, team_b, team_a_info["strTeamShort"], team_b_info["strTeamShort"], selected_seasons,
-        _progress=progress,
+        team_a, team_b, team_a_info["strTeamShort"], team_b_info["strTeamShort"], selected_seasons
     )
     fetch_seconds = time.time() - t0
-    progress.empty()
 
     if api_down:
         st.error("TheSportsDB appears to be unavailable right now. Please try again shortly.")
@@ -226,7 +218,7 @@ def main():
         )
         st.stop()
 
-    # METRICS
+    # metrics 
     st.caption(
         "Card statistics aren't available on TheSportsDB's free tier, so this analysis "
         "covers goals and results only (average goals per match stands in for intensity)."
@@ -246,7 +238,7 @@ def main():
     c5.metric(f"{team_b} wins", wins_b, delta=f"{goals_b} goals scored", delta_color="off")
     st.caption(f"Data fetched from TheSportsDB in {fetch_seconds:.1f}s (instant on repeat visits - cached).")
 
-    # visualisation: goals per season. shows the intensity
+    #  visualisation: goals per season >>  shows the intensity  
     season_agg = (
         df.groupby("season")
         .agg(
